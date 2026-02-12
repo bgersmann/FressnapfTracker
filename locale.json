@@ -1,0 +1,28 @@
+{
+    "translations": {
+        "de": {
+            "FressnapfTracker": "FressnapfTracker",
+            "Translation": "Übersetzung",
+            "Latitude": "Breitengrad",
+            "Longitude": "Längengrad",
+            "Accuracy": "Genauigkeit",
+            "Sampled At": "Zeitpunkt der Messung",
+            "Battery": "Batterie",
+            "Last Seen": "Zuletzt gesehen",
+            "Name": "Name",
+            "Charging": "Wird geladen"
+        },
+        "en": {
+            "FressnapfTracker": "FressnapfTracker",
+            "Translation": "Translation",
+            "Latitude": "Latitude",
+            "Longitude": "Longitude",
+            "Accuracy": "Accuracy",
+            "Sampled At": "Sampled At",
+            "Battery": "Battery",
+            "Last Seen": "Last Seen",
+            "Name": "Name",
+            "Charging": "Charging"
+        }
+    }
+}

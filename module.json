@@ -1,0 +1,16 @@
+{
+    "id": "{AF92FA56-B339-6D82-B015-DF819C042C29}",
+    "name": "FressnapfTracker",
+    "url": "https://github.com/bgersmann/FressnapfTracker",
+    "type": 3,
+    "vendor": "",
+    "aliases": [
+    ],
+    "parentRequirements": [
+    ],
+    "childRequirements": [
+    ],
+    "implemented": [
+    ],
+    "prefix": "FRT"
+}

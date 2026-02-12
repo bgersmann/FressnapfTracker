@@ -1,0 +1,148 @@
+{
+    "elements": [
+        {
+            "type": "CheckBox",
+            "caption": "Aktiv",
+            "download": "",
+            "enabled": true,
+            "link": false,
+            "name": "active",
+            "onChange": "",
+            "value": false,
+            "visible": true,
+            "width": ""
+        },
+        {
+            "type": "NumberSpinner",
+            "caption": "Timer (sekunden):",
+            "digits": 0,
+            "enabled": true,
+            "hex": false,
+            "maximum": null,
+            "minimum": null,
+            "moreDigits": false,
+            "name": "Timer",
+            "onChange": "",
+            "suffix": "",
+            "value": 0,
+            "visible": true,
+            "width": "300px"
+        },
+        {
+            "type": "Label",
+            "bold": false,
+            "caption": "Bitte Handynummer eintragen (Format:+4917012345678) und \"Änderungen übernehmen\". Danach \"SMS Anfordern\".",
+            "color": 0,
+            "italic": false,
+            "link": true,
+            "name": "",
+            "underline": false,
+            "visible": true,
+            "width": ""
+        },
+        {
+            "type": "Label",
+            "bold": false,
+            "caption": "Den Code eintragen -> Änderungen übernehmen und \"SMS Verifizieren\". -> Danach \"Devices auslesen\" und Serial auswählen.",
+            "color": 0,
+            "italic": false,
+            "link": true,
+            "name": "",
+            "underline": false,
+            "visible": true,
+            "width": ""
+        },
+        {
+            "type": "ValidationTextBox",
+            "caption": "Handynummer:",
+            "enabled": true,
+            "multiline": false,
+            "name": "phoneNumber",
+            "onChange": "",
+            "validate": "^\\+49[1-9][0-9]{1,14}$",
+            "value": "0",
+            "visible": true,
+            "width": "300px"
+        },
+        {
+            "type": "ValidationTextBox",
+            "caption": "SMS Code:",
+            "enabled": true,
+            "multiline": false,
+            "name": "smsCode",
+            "onChange": "",
+            "validate": "^[0-9]{6}$",
+            "value": "0",
+            "visible": true,
+            "width": "300px"
+        },
+        {
+            "type": "Select",
+            "caption": "Tracker Serial:",
+            "download": "",
+            "enabled": true,
+            "link": false,
+            "name": "TrackerID",
+            "options": [],
+            "onChange": "",
+            "value": "",
+            "visible": true,
+            "width": "300px"
+        }
+    ],
+    "actions": [
+        {
+            "type": "Button",
+            "caption": "SMS Anfordern",
+            "confirm": "",
+            "download": "",
+            "enabled": true,
+            "link": false,
+            "name": "requestSmsCode",
+            "onClick": "FRT_getSmsCode($id);",
+            "visible": true,
+            "width": ""
+        },
+        {
+            "type": "Button",
+            "caption": "SMS Verifizieren",
+            "confirm": "",
+            "download": "",
+            "enabled": true,
+            "link": false,
+            "name": "verifySmsCode",
+            "onClick": "FRT_authenticateSMSCode($id);",
+            "visible": true,
+            "width": ""
+        },
+        {
+            "type": "Button",
+            "caption": "Devices auslesen",
+            "confirm": "",
+            "download": "",
+            "enabled": true,
+            "link": false,
+            "name": "readDevice",
+            "onClick": "FRT_getDevices($id);",
+            "visible": true,
+            "width": ""
+        },
+        {
+            "type": "Button",
+            "caption": "Device Daten holen",
+            "confirm": "",
+            "download": "",
+            "enabled": true,
+            "link": false,
+            "name": "readDeviceData",
+            "onClick": "FRT_getDeviceData($id);",
+            "visible": true,
+            "width": ""
+        }
+    ],
+    "status": [
+        { "code": 102, "icon": "active", "caption": "Login Aktiv" },
+        { "code": 201, "icon": "active", "caption": "Inaktiv" },
+        { "code": 301, "icon": "active", "caption": "SMS Gesendet, bitte Code eingeben" }
+    ]
+}
