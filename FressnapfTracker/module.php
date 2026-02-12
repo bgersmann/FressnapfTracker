@@ -21,8 +21,8 @@ class FressnapfTracker extends IPSModuleStrict
         $this->RegisterAttributeString("authToken", "");
         $this->RegisterAttributeString("deviceToken", "");
         $this->RegisterAttributeString("serialnumber", "");
-        $this->RegisterPropertyString("phoneNumber", "");
-        $this->RegisterPropertyString("smsCode", "");
+        $this->RegisterPropertyString("phoneNumber", "+49");
+        $this->RegisterPropertyString("smsCode", "123456");
         $this->RegisterPropertyString("TrackerID", "");
         $this->RegisterPropertyBoolean("active", false);
         $this->RegisterPropertyInteger( 'Timer', 60 );
@@ -233,11 +233,11 @@ class FressnapfTracker extends IPSModuleStrict
         $response = $this->CallFressnapfAPI($url, $payload,"GET");
         $this->SendDebug("FRT", json_encode($response), 0);
         if (isset($response['position']['lat'])) {
-            $this->MaintainVariable( 'Latitude', $this->Translate( 'Latitude' ), 3, [ 'PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION, 'USAGE_TYPE'=> 0 ,'ICON'=> 'location-crosshairs'], 10, 1 );
+            $this->MaintainVariable( 'Latitude', $this->Translate( 'Latitude' ), 2, [ 'PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION, 'USAGE_TYPE'=> 0 ,'ICON'=> 'location-crosshairs'], 10, 1 );
             $this->SetValue('Latitude',$response['position']['lat']);    
         }
         if (isset($response['position']['lng'])) {
-            $this->MaintainVariable( 'Longitude', $this->Translate( 'Longitude' ), 3, [ 'PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION, 'USAGE_TYPE'=> 0 ,'ICON'=> 'location-crosshairs'], 20, 1 );
+            $this->MaintainVariable( 'Longitude', $this->Translate( 'Longitude' ), 2, [ 'PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION, 'USAGE_TYPE'=> 0 ,'ICON'=> 'location-crosshairs'], 20, 1 );
             $this->SetValue('Longitude',$response['position']['lng']);    
         }
         if (isset($response['position']['accuracy'])) {
