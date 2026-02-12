@@ -1,0 +1,12 @@
+{
+    "id": "{17842EB7-FC5C-5FD6-3624-9C9C2FEADD26}",
+    "name": "FressnapfTracker",
+    "author": "BGersmann",
+    "url": "https://github.com/bgersmann/FressnapfTracker",
+    "compatibility": {
+        "version": "8.2"
+    },
+    "version": "1.0",
+    "build": 202602091512,
+    "date": 1770646372
+}
