@@ -21,10 +21,13 @@ class FressnapfTracker extends IPSModuleStrict
         $this->RegisterAttributeString("authToken", "");
         $this->RegisterAttributeString("deviceToken", "");
         $this->RegisterAttributeString("serialnumber", "");
+        $this->RegisterAttributeString("trackBuffer", "[]");
+        $this->RegisterAttributeInteger("lastTrackEnd", 0);
         $this->RegisterPropertyString("phoneNumber", "+49");
         $this->RegisterPropertyString("smsCode", "123456");
         $this->RegisterPropertyString("TrackerID", "");
         $this->RegisterPropertyBoolean("active", false);
+        $this->RegisterPropertyBoolean("trackRecording", false);
         $this->RegisterPropertyInteger( 'Timer', 60 );
         $this->RegisterTimer( 'Collect Data', 0, "FRT_getDeviceData(\$_IPS['TARGET']);" );
     }
@@ -75,6 +78,14 @@ class FressnapfTracker extends IPSModuleStrict
                 }               
         } else {
             $this->SetStatus(104);
+        }
+
+        if ($this->ReadPropertyBoolean('trackRecording')) {
+            $this->MaintainVariable('LastDogTrack', $this->Translate('Letzte Hunderunde'), 3, '~TextBox', 60, true);
+        } else {
+            $this->MaintainVariable('LastDogTrack', $this->Translate('Letzte Hunderunde'), 3, '~TextBox', 60, false);
+            $this->WriteAttributeString('trackBuffer', '[]');
+            $this->WriteAttributeInteger('lastTrackEnd', 0);
         }
     }
 
@@ -266,6 +277,8 @@ class FressnapfTracker extends IPSModuleStrict
 			
             $this->SetValue('Charging',$response['charging']);    
         }
+
+        $this->handleTrackRecording($response);
         return true;
     }
 
@@ -283,4 +296,203 @@ class FressnapfTracker extends IPSModuleStrict
         return json_encode($form);
     }
 
+    private function handleTrackRecording(array $response): void
+    {
+        if (!$this->ReadPropertyBoolean('trackRecording')) {
+            return;
+        }
+
+        if (!isset($response['position']['lat'], $response['position']['lng'])) {
+            return;
+        }
+
+        $timestamp = $this->resolveTimestamp($response);
+        if ($timestamp === null) {
+            return;
+        }
+
+        $point = [
+            'lat' => (float)$response['position']['lat'],
+            'lon' => (float)$response['position']['lng'],
+            't'   => $timestamp
+        ];
+
+        $buffer = json_decode($this->ReadAttributeString('trackBuffer'), true);
+        if (!is_array($buffer)) {
+            $buffer = [];
+        }
+
+        if (!empty($buffer)) {
+            $lastPoint = end($buffer);
+            if (isset($lastPoint['t']) && $lastPoint['t'] === $point['t']) {
+                return;
+            }
+        }
+
+        $buffer[] = $point;
+        $maxPoints = 720;
+        if (count($buffer) > $maxPoints) {
+            $buffer = array_slice($buffer, -$maxPoints);
+        }
+
+        $this->WriteAttributeString('trackBuffer', json_encode($buffer));
+
+        $segment = $this->detectDogRound($buffer);
+        if ($segment === null) {
+            return;
+        }
+
+        $this->MaintainVariable('LastDogTrack', $this->Translate('Letzte Hunderunde'), 3, '~TextBox', 60, true);
+        $this->SetValue('LastDogTrack', json_encode($segment));
+    }
+
+    private function resolveTimestamp(array $response): ?int
+    {
+        $candidates = [];
+        if (isset($response['position']['sampled_at'])) {
+            $candidates[] = $response['position']['sampled_at'];
+        }
+        if (isset($response['last_seen'])) {
+            $candidates[] = $response['last_seen'];
+        }
+
+        foreach ($candidates as $candidate) {
+            if (is_numeric($candidate)) {
+                $value = (int)$candidate;
+                if ($value > 0) {
+                    return $value;
+                }
+            }
+            $parsed = strtotime((string)$candidate);
+            if ($parsed !== false) {
+                return $parsed;
+            }
+        }
+
+        return time();
+    }
+
+    private function detectDogRound(array $buffer): ?array
+    {
+        if (count($buffer) < 5) {
+            return null;
+        }
+
+        $segments = $this->splitIntoSegments($buffer, 300);
+        if (empty($segments)) {
+            return null;
+        }
+
+        $lastStored = (int)$this->ReadAttributeInteger('lastTrackEnd');
+        $now = time();
+
+        for ($i = count($segments) - 1; $i >= 0; $i--) {
+            $segment = $segments[$i];
+            $end = $segment[count($segment) - 1]['t'];
+            if ($end <= $lastStored) {
+                continue;
+            }
+            if (($now - $end) < 300) {
+                continue;
+            }
+            if ($this->isDogRound($segment)) {
+                $this->WriteAttributeInteger('lastTrackEnd', $end);
+                return $segment;
+            }
+        }
+
+        return null;
+    }
+
+    private function splitIntoSegments(array $buffer, int $maxGap): array
+    {
+        $segments = [];
+        $current = [];
+        foreach ($buffer as $point) {
+            if (!$current) {
+                $current[] = $point;
+                continue;
+            }
+
+            $prev = $current[count($current) - 1];
+            if (($point['t'] - $prev['t']) > $maxGap) {
+                if (count($current) > 1) {
+                    $segments[] = $current;
+                }
+                $current = [$point];
+            } else {
+                $current[] = $point;
+            }
+        }
+
+        if (count($current) > 1) {
+            $segments[] = $current;
+        }
+
+        return $segments;
+    }
+
+    private function isDogRound(array $segment): bool
+    {
+        $start = $segment[0]['t'];
+        $end = $segment[count($segment) - 1]['t'];
+        $duration = max(1, $end - $start);
+
+        if ($duration < 600 || $duration > 10800) {
+            return false;
+        }
+
+        $totalDistance = 0.0;
+        $maxSpeed = 0.0;
+        $speedViolations = 0;
+
+        for ($i = 1, $count = count($segment); $i < $count; $i++) {
+            $distance = $this->calculateDistance($segment[$i - 1], $segment[$i]);
+            $totalDistance += $distance;
+            $deltaTime = max(1, $segment[$i]['t'] - $segment[$i - 1]['t']);
+            $speed = $distance / $deltaTime;
+            if ($speed > $maxSpeed) {
+                $maxSpeed = $speed;
+            }
+            if ($speed > 6.5) {
+                $speedViolations++;
+            }
+        }
+
+        if ($totalDistance < 500 || $totalDistance > 20000) {
+            return false;
+        }
+
+        $avgSpeed = $totalDistance / $duration;
+        if ($avgSpeed > 2.2) {
+            return false;
+        }
+
+        if ($maxSpeed > 6.5 || $speedViolations > 2) {
+            return false;
+        }
+
+        if (count($segment) < 20) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function calculateDistance(array $from, array $to): float
+    {
+        $earthRadius = 6371000;
+        $latFrom = deg2rad($from['lat']);
+        $latTo = deg2rad($to['lat']);
+        $lonFrom = deg2rad($from['lon']);
+        $lonTo = deg2rad($to['lon']);
+
+        $latDelta = $latTo - $latFrom;
+        $lonDelta = $lonTo - $lonFrom;
+
+        $a = sin($latDelta / 2) * sin($latDelta / 2) + cos($latFrom) * cos($latTo) * sin($lonDelta / 2) * sin($lonDelta / 2);
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return $earthRadius * $c;
+    }
 }

@@ -88,6 +88,18 @@
             "value": "",
             "visible": true,
             "width": "300px"
+        },
+        {
+            "type": "CheckBox",
+            "caption": "Hunderunde speichern",
+            "download": "",
+            "enabled": true,
+            "link": false,
+            "name": "trackRecording",
+            "onChange": "",
+            "value": false,
+            "visible": true,
+            "width": ""
         }
     ],
     "actions": [
