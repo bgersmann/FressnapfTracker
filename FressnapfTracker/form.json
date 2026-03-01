@@ -100,6 +100,58 @@
             "value": false,
             "visible": true,
             "width": ""
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Gassi-Runden Erkennung",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Koordinaten werden automatisch aus der Location Control übernommen; das Archiv stammt aus dem Archive Control.",
+                    "visible": true
+                },
+                {
+                    "type": "NumberSpinner",
+                    "caption": "Haus-Radius (m)",
+                    "digits": 0,
+                    "enabled": true,
+                    "name": "homeRadius",
+                    "value": 50,
+                    "visible": true,
+                    "width": "300px"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "caption": "Zusätzliche Austritts-Toleranz (m)",
+                    "digits": 0,
+                    "enabled": true,
+                    "name": "homeLeaveMargin",
+                    "value": 20,
+                    "visible": true,
+                    "width": "300px"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "caption": "Max. Gehgeschwindigkeit (km/h)",
+                    "digits": 1,
+                    "enabled": true,
+                    "name": "maxWalkSpeedKmh",
+                    "value": 25,
+                    "visible": true,
+                    "width": "300px"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "caption": "Auswertungsfenster (h)",
+                    "digits": 0,
+                    "enabled": true,
+                    "name": "trackLookbackHours",
+                    "value": 6,
+                    "visible": true,
+                    "width": "300px"
+                }
+            ],
+            "visible": true
         }
     ],
     "actions": [

@@ -23,11 +23,17 @@ class FressnapfTracker extends IPSModuleStrict
         $this->RegisterAttributeString("serialnumber", "");
         $this->RegisterAttributeString("trackBuffer", "[]");
         $this->RegisterAttributeInteger("lastTrackEnd", 0);
+        $this->RegisterAttributeInteger("dogIsAway", 0);
+        $this->RegisterAttributeInteger("trackStart", 0);
         $this->RegisterPropertyString("phoneNumber", "+49");
         $this->RegisterPropertyString("smsCode", "123456");
         $this->RegisterPropertyString("TrackerID", "");
         $this->RegisterPropertyBoolean("active", false);
         $this->RegisterPropertyBoolean("trackRecording", false);
+        $this->RegisterPropertyInteger("homeRadius", 50);
+        $this->RegisterPropertyInteger("homeLeaveMargin", 20);
+        $this->RegisterPropertyFloat("maxWalkSpeedKmh", 25.0);
+        $this->RegisterPropertyInteger("trackLookbackHours", 6);
         $this->RegisterPropertyInteger( 'Timer', 60 );
         $this->RegisterTimer( 'Collect Data', 0, "FRT_getDeviceData(\$_IPS['TARGET']);" );
     }
@@ -82,10 +88,15 @@ class FressnapfTracker extends IPSModuleStrict
 
         if ($this->ReadPropertyBoolean('trackRecording')) {
             $this->MaintainVariable('LastDogTrack', $this->Translate('Letzte Hunderunde'), 3, '~TextBox', 60, true);
+            $this->MaintainVariable('DogIsAway', $this->Translate('Hund unterwegs'), 0, '', 65, true);
+            $this->SetValue('DogIsAway', (bool)$this->ReadAttributeInteger('dogIsAway'));
         } else {
             $this->MaintainVariable('LastDogTrack', $this->Translate('Letzte Hunderunde'), 3, '~TextBox', 60, false);
+            $this->MaintainVariable('DogIsAway', $this->Translate('Hund unterwegs'), 0, '', 65, false);
             $this->WriteAttributeString('trackBuffer', '[]');
             $this->WriteAttributeInteger('lastTrackEnd', 0);
+            $this->WriteAttributeInteger('dogIsAway', 0);
+            $this->WriteAttributeInteger('trackStart', 0);
         }
     }
 
@@ -306,44 +317,35 @@ class FressnapfTracker extends IPSModuleStrict
             return;
         }
 
+        $homeCoordinates = $this->getHomeCoordinates();
+        if ($homeCoordinates === null) {
+            return;
+        }
+        [$homeLat, $homeLon] = $homeCoordinates;
+
         $timestamp = $this->resolveTimestamp($response);
         if ($timestamp === null) {
             return;
         }
 
-        $point = [
-            'lat' => (float)$response['position']['lat'],
-            'lon' => (float)$response['position']['lng'],
-            't'   => $timestamp
-        ];
+        $currentLat = (float)$response['position']['lat'];
+        $currentLon = (float)$response['position']['lng'];
+        $distanceHome = $this->calculateCoordinateDistance($currentLat, $currentLon, $homeLat, $homeLon);
+        $radius = max(1, (int)$this->ReadPropertyInteger('homeRadius'));
+        $leaveMargin = max(0, (int)$this->ReadPropertyInteger('homeLeaveMargin'));
+        $isAway = (bool)$this->ReadAttributeInteger('dogIsAway');
 
-        $buffer = json_decode($this->ReadAttributeString('trackBuffer'), true);
-        if (!is_array($buffer)) {
-            $buffer = [];
-        }
-
-        if (!empty($buffer)) {
-            $lastPoint = end($buffer);
-            if (isset($lastPoint['t']) && $lastPoint['t'] === $point['t']) {
-                return;
-            }
-        }
-
-        $buffer[] = $point;
-        $maxPoints = 720;
-        if (count($buffer) > $maxPoints) {
-            $buffer = array_slice($buffer, -$maxPoints);
-        }
-
-        $this->WriteAttributeString('trackBuffer', json_encode($buffer));
-
-        $segment = $this->detectDogRound($buffer);
-        if ($segment === null) {
+        if (!$isAway && $distanceHome > ($radius + $leaveMargin)) {
+            $this->SendDebug('FRT', 'Hunderunde gestartet (außerhalb des Radius).', 0);
+            $this->setDogAwayState(true, $timestamp);
             return;
         }
 
-        $this->MaintainVariable('LastDogTrack', $this->Translate('Letzte Hunderunde'), 3, '~TextBox', 60, true);
-        $this->SetValue('LastDogTrack', json_encode($segment));
+        if ($isAway && $distanceHome < $radius) {
+            $this->SendDebug('FRT', 'Hund ist zurück im Radius – Runde wird ausgewertet.', 0);
+            $this->finalizeDogRound($timestamp);
+            $this->setDogAwayState(false, $timestamp);
+        }
     }
 
     private function resolveTimestamp(array $response): ?int
@@ -371,126 +373,176 @@ class FressnapfTracker extends IPSModuleStrict
 
         return time();
     }
-
-    private function detectDogRound(array $buffer): ?array
+    private function setDogAwayState(bool $state, int $timestamp): void
     {
-        if (count($buffer) < 5) {
-            return null;
+        $this->WriteAttributeInteger('dogIsAway', $state ? 1 : 0);
+        $this->WriteAttributeInteger('trackStart', $state ? $timestamp : 0);
+
+        $variableID = @$this->GetIDForIdent('DogIsAway');
+        if ($variableID) {
+            $this->SetValue('DogIsAway', $state);
         }
-
-        $segments = $this->splitIntoSegments($buffer, 300);
-        if (empty($segments)) {
-            return null;
-        }
-
-        $lastStored = (int)$this->ReadAttributeInteger('lastTrackEnd');
-        $now = time();
-
-        for ($i = count($segments) - 1; $i >= 0; $i--) {
-            $segment = $segments[$i];
-            $end = $segment[count($segment) - 1]['t'];
-            if ($end <= $lastStored) {
-                continue;
-            }
-            if (($now - $end) < 300) {
-                continue;
-            }
-            if ($this->isDogRound($segment)) {
-                $this->WriteAttributeInteger('lastTrackEnd', $end);
-                return $segment;
-            }
-        }
-
-        return null;
     }
 
-    private function splitIntoSegments(array $buffer, int $maxGap): array
+    private function finalizeDogRound(int $endTimestamp): void
     {
-        $segments = [];
-        $current = [];
-        foreach ($buffer as $point) {
-            if (!$current) {
-                $current[] = $point;
+        $archiveID = $this->resolveArchiveControlID();
+        if ($archiveID === 0) {
+            $this->SendDebug('FRT', 'Kein Archive Control verfügbar – keine Runde gespeichert.', 0);
+            return;
+        }
+
+        $latVarID = @$this->GetIDForIdent('Latitude');
+        $lonVarID = @$this->GetIDForIdent('Longitude');
+        if (!$latVarID || !$lonVarID) {
+            $this->SendDebug('FRT', 'Latitude/Longitude Variablen nicht gefunden.', 0);
+            return;
+        }
+
+        $hours = max(1, (int)$this->ReadPropertyInteger('trackLookbackHours'));
+        $lookbackSeconds = $hours * 3600;
+        $startTimestamp = (int)$this->ReadAttributeInteger('trackStart');
+        if ($startTimestamp <= 0) {
+            $startTimestamp = $endTimestamp - $lookbackSeconds;
+        }
+        $startTimestamp = max($endTimestamp - $lookbackSeconds, $startTimestamp - 60);
+
+        $latValues = AC_GetLoggedValues($archiveID, $latVarID, $startTimestamp, $endTimestamp, 0);
+        $lonValues = AC_GetLoggedValues($archiveID, $lonVarID, $startTimestamp, $endTimestamp, 0);
+        if (empty($latValues) || empty($lonValues)) {
+            $this->SendDebug('FRT', 'Keine archivierten Koordinaten für die Auswertung gefunden.', 0);
+            return;
+        }
+
+        $route = $this->mergeRouteData($latValues, $lonValues);
+        if (count($route) < 2) {
+            $this->SendDebug('FRT', 'Gefilterte Route enthält zu wenige Punkte.', 0);
+            return;
+        }
+
+        usort($route, fn ($a, $b) => $a['t'] <=> $b['t']);
+        $json = json_encode($route);
+        $trackVarID = @$this->GetIDForIdent('LastDogTrack');
+        if ($trackVarID) {
+            $this->SetValue('LastDogTrack', $json);
+        }
+        $this->WriteAttributeString('trackBuffer', $json);
+        $lastPoint = $route[count($route) - 1];
+        $this->WriteAttributeInteger('lastTrackEnd', (int)$lastPoint['t']);
+    }
+
+    private function resolveArchiveControlID(): int
+    {
+        $list = IPS_GetInstanceListByModuleID('{43192F0B-135B-4CE7-A0A7-1475603F3060}');
+        return $list[0] ?? 0;
+    }
+
+    private function mergeRouteData(array $latValues, array $lonValues): array
+    {
+        if (empty($latValues) || empty($lonValues)) {
+            return [];
+        }
+
+        $tolerance = 2; // seconds
+        $maxSpeed = max(1.0, (float)$this->ReadPropertyFloat('maxWalkSpeedKmh'));
+        $cleaned = [];
+        $lastLat = null;
+        $lastLon = null;
+        $lastTime = null;
+
+        $lonIndex = 0;
+        $lonCount = count($lonValues);
+
+        foreach ($latValues as $latPoint) {
+            $latTime = (int)$latPoint['TimeStamp'];
+            while ($lonIndex < $lonCount && (int)$lonValues[$lonIndex]['TimeStamp'] < ($latTime - $tolerance)) {
+                $lonIndex++;
+            }
+
+            if ($lonIndex >= $lonCount) {
+                break;
+            }
+
+            $lonPoint = $lonValues[$lonIndex];
+            if (abs((int)$lonPoint['TimeStamp'] - $latTime) > $tolerance) {
                 continue;
             }
 
-            $prev = $current[count($current) - 1];
-            if (($point['t'] - $prev['t']) > $maxGap) {
-                if (count($current) > 1) {
-                    $segments[] = $current;
+            $currentLat = (float)$latPoint['Value'];
+            $currentLon = (float)$lonPoint['Value'];
+            $currentTime = $latTime;
+
+            if ($lastLat !== null) {
+                $distance = $this->calculateCoordinateDistance($lastLat, $lastLon, $currentLat, $currentLon);
+                $timeDiffHours = ($currentTime - $lastTime) / 3600;
+                $speed = ($timeDiffHours > 0) ? ($distance / 1000) / $timeDiffHours : 0.0;
+                if ($speed > $maxSpeed) {
+                    continue;
                 }
-                $current = [$point];
-            } else {
-                $current[] = $point;
             }
+
+            $cleaned[] = [
+                'lat' => $currentLat,
+                'lon' => $currentLon,
+                't'   => $currentTime
+            ];
+
+            $lastLat = $currentLat;
+            $lastLon = $currentLon;
+            $lastTime = $currentTime;
         }
 
-        if (count($current) > 1) {
-            $segments[] = $current;
-        }
-
-        return $segments;
+        return $cleaned;
     }
 
-    private function isDogRound(array $segment): bool
+    private function getHomeCoordinates(): ?array
     {
-        $start = $segment[0]['t'];
-        $end = $segment[count($segment) - 1]['t'];
-        $duration = max(1, $end - $start);
-
-        if ($duration < 600 || $duration > 10800) {
-            return false;
+        $locationID = $this->resolveLocationControlID();
+        if ($locationID === 0) {
+            $this->SendDebug('FRT', 'Keine Location Control Instanz gefunden.', 0);
+            return null;
         }
 
-        $totalDistance = 0.0;
-        $maxSpeed = 0.0;
-        $speedViolations = 0;
-
-        for ($i = 1, $count = count($segment); $i < $count; $i++) {
-            $distance = $this->calculateDistance($segment[$i - 1], $segment[$i]);
-            $totalDistance += $distance;
-            $deltaTime = max(1, $segment[$i]['t'] - $segment[$i - 1]['t']);
-            $speed = $distance / $deltaTime;
-            if ($speed > $maxSpeed) {
-                $maxSpeed = $speed;
-            }
-            if ($speed > 6.5) {
-                $speedViolations++;
-            }
+        $latitude = @IPS_GetProperty($locationID, 'Latitude');
+        $longitude = @IPS_GetProperty($locationID, 'Longitude');
+        if (!is_numeric($latitude) || !is_numeric($longitude)) {
+            $this->SendDebug('FRT', 'Location Control liefert keine Koordinaten.', 0);
+            return null;
         }
 
-        if ($totalDistance < 500 || $totalDistance > 20000) {
-            return false;
-        }
-
-        $avgSpeed = $totalDistance / $duration;
-        if ($avgSpeed > 2.2) {
-            return false;
-        }
-
-        if ($maxSpeed > 6.5 || $speedViolations > 2) {
-            return false;
-        }
-
-        if (count($segment) < 20) {
-            return false;
-        }
-
-        return true;
+        return [(float)$latitude, (float)$longitude];
     }
 
-    private function calculateDistance(array $from, array $to): float
+    private function resolveLocationControlID(): int
     {
-        $earthRadius = 6371000;
-        $latFrom = deg2rad($from['lat']);
-        $latTo = deg2rad($to['lat']);
-        $lonFrom = deg2rad($from['lon']);
-        $lonTo = deg2rad($to['lon']);
+        $guids = [
+            '{C6D2D783-3A5A-41A8-A4B7-2281FE6E6EB2}',
+            '{B1E52E0C-3B0A-4C39-A3DC-B0C18482C6B8}'
+        ];
+
+        foreach ($guids as $guid) {
+            $ids = IPS_GetInstanceListByModuleID($guid);
+            if (!empty($ids)) {
+                return $ids[0];
+            }
+        }
+
+        return 0;
+    }
+
+    private function calculateCoordinateDistance(float $lat1, float $lon1, float $lat2, float $lon2): float
+    {
+        $earthRadius = 6371000.0;
+        $latFrom = deg2rad($lat1);
+        $latTo = deg2rad($lat2);
+        $lonFrom = deg2rad($lon1);
+        $lonTo = deg2rad($lon2);
 
         $latDelta = $latTo - $latFrom;
         $lonDelta = $lonTo - $lonFrom;
 
-        $a = sin($latDelta / 2) * sin($latDelta / 2) + cos($latFrom) * cos($latTo) * sin($lonDelta / 2) * sin($lonDelta / 2);
+        $a = sin($latDelta / 2) * sin($latDelta / 2)
+            + cos($latFrom) * cos($latTo) * sin($lonDelta / 2) * sin($lonDelta / 2);
         $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
 
         return $earthRadius * $c;
