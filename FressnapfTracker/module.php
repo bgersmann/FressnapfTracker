@@ -497,37 +497,22 @@ class FressnapfTracker extends IPSModuleStrict
 
     private function getHomeCoordinates(): ?array
     {
-        $locationID = $this->resolveLocationControlID();
+        $locationID = IPS_GetInstanceListByModuleID('{45E97A63-F870-408A-B259-2933F7EABF74}')[0] ?? 0;
         if ($locationID === 0) {
             $this->SendDebug('FRT', 'Keine Location Control Instanz gefunden.', 0);
             return null;
         }
 
-        $latitude = @IPS_GetProperty($locationID, 'Latitude');
-        $longitude = @IPS_GetProperty($locationID, 'Longitude');
-        if (!is_numeric($latitude) || !is_numeric($longitude)) {
-            $this->SendDebug('FRT', 'Location Control liefert keine Koordinaten.', 0);
-            return null;
-        }
-
-        return [(float)$latitude, (float)$longitude];
-    }
-
-    private function resolveLocationControlID(): int
-    {
-        $guids = [
-            '{C6D2D783-3A5A-41A8-A4B7-2281FE6E6EB2}',
-            '{B1E52E0C-3B0A-4C39-A3DC-B0C18482C6B8}'
-        ];
-
-        foreach ($guids as $guid) {
-            $ids = IPS_GetInstanceListByModuleID($guid);
-            if (!empty($ids)) {
-                return $ids[0];
+        $locationRaw = IPS_GetProperty($locationID, 'Location');
+        $this->SendDebug('FRT', 'Location:'. $locationRaw, 0);
+        if (is_string($locationRaw) && $locationRaw !== '') {
+            $decoded = json_decode($locationRaw, true);
+            if (is_array($decoded) && isset($decoded['latitude']) && isset($decoded['longitude'])) {
+                return [(float)$decoded['latitude'], (float)$decoded['longitude']];
             }
         }
 
-        return 0;
+        return null;
     }
 
     private function calculateCoordinateDistance(float $lat1, float $lon1, float $lat2, float $lon2): float
