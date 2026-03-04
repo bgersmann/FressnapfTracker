@@ -111,6 +111,44 @@
                     "visible": true
                 },
                 {
+                    "type": "CheckBox",
+                    "caption": "Koordinaten aus Location Control übernehmen",
+                    "enabled": true,
+                    "name": "useLocationControl",
+                    "value": true,
+                    "visible": true,
+                    "width": "300px"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Wenn deaktiviert, werden die folgenden manuellen Koordinaten verwendet.",
+                    "visible": true
+                },
+                {
+                    "type": "NumberSpinner",
+                    "caption": "Manuelle Latitude (°)",
+                    "digits": 6,
+                    "enabled": true,
+                    "maximum": 90,
+                    "minimum": -90,
+                    "name": "manualHomeLatitude",
+                    "value": 0,
+                    "visible": true,
+                    "width": "300px"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "caption": "Manuelle Longitude (°)",
+                    "digits": 6,
+                    "enabled": true,
+                    "maximum": 180,
+                    "minimum": -180,
+                    "name": "manualHomeLongitude",
+                    "value": 0,
+                    "visible": true,
+                    "width": "300px"
+                },
+                {
                     "type": "NumberSpinner",
                     "caption": "Haus-Radius (m)",
                     "digits": 0,

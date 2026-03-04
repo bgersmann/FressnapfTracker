@@ -32,6 +32,9 @@ class FressnapfTracker extends IPSModuleStrict
         $this->RegisterPropertyBoolean("trackRecording", false);
         $this->RegisterPropertyInteger("homeRadius", 50);
         $this->RegisterPropertyInteger("homeLeaveMargin", 20);
+        $this->RegisterPropertyBoolean('useLocationControl', true);
+        $this->RegisterPropertyFloat('manualHomeLatitude', 0.0);
+        $this->RegisterPropertyFloat('manualHomeLongitude', 0.0);
         $this->RegisterPropertyFloat("maxWalkSpeedKmh", 25.0);
         $this->RegisterPropertyInteger("trackLookbackHours", 6);
         $this->RegisterPropertyInteger( 'Timer', 60 );
@@ -335,9 +338,13 @@ class FressnapfTracker extends IPSModuleStrict
         $leaveMargin = max(0, (int)$this->ReadPropertyInteger('homeLeaveMargin'));
         $isAway = (bool)$this->ReadAttributeInteger('dogIsAway');
 
+        if ($isAway) {
+            $this->collectTrackSample($timestamp, $currentLat, $currentLon);
+        }
+
         if (!$isAway && $distanceHome > ($radius + $leaveMargin)) {
             $this->SendDebug('FRT', 'Hunderunde gestartet (außerhalb des Radius).', 0);
-            $this->setDogAwayState(true, $timestamp);
+            $this->startDogRound($timestamp, $currentLat, $currentLon);
             return;
         }
 
@@ -384,19 +391,96 @@ class FressnapfTracker extends IPSModuleStrict
         }
     }
 
-    private function finalizeDogRound(int $endTimestamp): void
+    private function startDogRound(int $timestamp, float $lat, float $lon): void
+    {
+        $this->WriteAttributeString('trackBuffer', '[]');
+        $this->setDogAwayState(true, $timestamp);
+        $this->collectTrackSample($timestamp, $lat, $lon);
+    }
+
+    private function collectTrackSample(int $timestamp, float $lat, float $lon): void
+    {
+        $rawBuffer = $this->ReadAttributeString('trackBuffer');
+        $buffer = json_decode($rawBuffer, true);
+        if (!is_array($buffer)) {
+            $buffer = [];
+        }
+
+        $maxSpeed = max(1.0, (float)$this->ReadPropertyFloat('maxWalkSpeedKmh'));
+        $count = count($buffer);
+        if ($count > 0) {
+            $last = $buffer[$count - 1];
+            $lastTime = (int)($last['t'] ?? 0);
+            $timeDiff = $timestamp - $lastTime;
+            if ($timeDiff <= 0) {
+                return;
+            }
+
+            $distance = $this->calculateCoordinateDistance((float)$last['lat'], (float)$last['lon'], $lat, $lon);
+            $speed = ($timeDiff > 0) ? (($distance / 1000.0) / ($timeDiff / 3600.0)) : 0.0;
+            if ($speed > $maxSpeed) {
+                $this->SendDebug('FRT', 'GPS-Punkt verworfen (zu hohe Geschwindigkeit im Puffer).', 0);
+                return;
+            }
+        }
+
+        $buffer[] = [
+            'lat' => $lat,
+            'lon' => $lon,
+            't'   => $timestamp
+        ];
+
+        if (count($buffer) > 2000) {
+            $buffer = array_slice($buffer, -2000);
+        }
+
+        $this->WriteAttributeString('trackBuffer', json_encode($buffer));
+    }
+
+    private function buildRouteFromBuffer(int $endTimestamp): array
+    {
+        $rawBuffer = $this->ReadAttributeString('trackBuffer');
+        $buffer = json_decode($rawBuffer, true);
+        if (!is_array($buffer) || count($buffer) < 2) {
+            return [];
+        }
+
+        $hours = max(1, (int)$this->ReadPropertyInteger('trackLookbackHours'));
+        $earliest = $endTimestamp - ($hours * 3600) - 60;
+        $latest = $endTimestamp + 30;
+        $result = [];
+
+        foreach ($buffer as $point) {
+            if (!is_array($point) || !isset($point['lat'], $point['lon'], $point['t'])) {
+                continue;
+            }
+            $time = (int)$point['t'];
+            if ($time < $earliest || $time > $latest) {
+                continue;
+            }
+            $result[] = [
+                'lat' => (float)$point['lat'],
+                'lon' => (float)$point['lon'],
+                't'   => $time
+            ];
+        }
+
+        return $result;
+    }
+
+    private function buildRouteFromArchive(int $endTimestamp): array
     {
         $archiveID = $this->resolveArchiveControlID();
         if ($archiveID === 0) {
-            $this->SendDebug('FRT', 'Kein Archive Control verfügbar – keine Runde gespeichert.', 0);
-            return;
+            $this->SendDebug('FRT', 'Kein Archive Control verfügbar – Fallback nicht möglich.', 0);
+            return [];
         }
 
         $latVarID = @$this->GetIDForIdent('Latitude');
         $lonVarID = @$this->GetIDForIdent('Longitude');
         if (!$latVarID || !$lonVarID) {
             $this->SendDebug('FRT', 'Latitude/Longitude Variablen nicht gefunden.', 0);
-            return;
+            return [];
         }
 
         $hours = max(1, (int)$this->ReadPropertyInteger('trackLookbackHours'));
@@ -411,12 +495,28 @@ class FressnapfTracker extends IPSModuleStrict
         $lonValues = AC_GetLoggedValues($archiveID, $lonVarID, $startTimestamp, $endTimestamp, 0);
         if (empty($latValues) || empty($lonValues)) {
             $this->SendDebug('FRT', 'Keine archivierten Koordinaten für die Auswertung gefunden.', 0);
-            return;
+            return [];
         }
 
         $route = $this->mergeRouteData($latValues, $lonValues);
         if (count($route) < 2) {
-            $this->SendDebug('FRT', 'Gefilterte Route enthält zu wenige Punkte.', 0);
+            $this->SendDebug('FRT', 'Gefilterte Route aus dem Archiv enthält zu wenige Punkte.', 0);
+            return [];
+        }
+
+        return $route;
+    }
+
+    private function finalizeDogRound(int $endTimestamp): void
+    {
+        $route = $this->buildRouteFromBuffer($endTimestamp);
+        if (count($route) < 2) {
+            $this->SendDebug('FRT', 'Puffer enthält zu wenige Punkte – nutze Archivdaten.', 0);
+            $route = $this->buildRouteFromArchive($endTimestamp);
+        }
+
+        if (count($route) < 2) {
+            $this->SendDebug('FRT', 'Keine verwertbaren Koordinaten gefunden, Runde wird verworfen.', 0);
             return;
         }
 
@@ -497,6 +597,16 @@ class FressnapfTracker extends IPSModuleStrict
 
     private function getHomeCoordinates(): ?array
     {
+        if (!$this->ReadPropertyBoolean('useLocationControl')) {
+            $manualLat = (float)$this->ReadPropertyFloat('manualHomeLatitude');
+            $manualLon = (float)$this->ReadPropertyFloat('manualHomeLongitude');
+            if ($this->isCoordinateValid($manualLat, $manualLon)) {
+                return [$manualLat, $manualLon];
+            }
+            $this->SendDebug('FRT', 'Manuelle Koordinaten sind nicht vollständig oder ungültig.', 0);
+            return null;
+        }
+
         $locationID = IPS_GetInstanceListByModuleID('{45E97A63-F870-408A-B259-2933F7EABF74}')[0] ?? 0;
         if ($locationID === 0) {
             $this->SendDebug('FRT', 'Keine Location Control Instanz gefunden.', 0);
@@ -504,15 +614,25 @@ class FressnapfTracker extends IPSModuleStrict
         }
 
         $locationRaw = IPS_GetProperty($locationID, 'Location');
-        $this->SendDebug('FRT', 'Location:'. $locationRaw, 0);
+        $this->SendDebug('FRT', 'Location:' . $locationRaw, 0);
         if (is_string($locationRaw) && $locationRaw !== '') {
             $decoded = json_decode($locationRaw, true);
             if (is_array($decoded) && isset($decoded['latitude']) && isset($decoded['longitude'])) {
-                return [(float)$decoded['latitude'], (float)$decoded['longitude']];
+                $lat = (float)$decoded['latitude'];
+                $lon = (float)$decoded['longitude'];
+                if ($this->isCoordinateValid($lat, $lon)) {
+                    return [$lat, $lon];
+                }
+                $this->SendDebug('FRT', 'Location Control liefert ungültige Koordinaten.', 0);
             }
         }
 
         return null;
+    }
+
+    private function isCoordinateValid(float $lat, float $lon): bool
+    {
+        return $lat >= -90.0 && $lat <= 90.0 && $lon >= -180.0 && $lon <= 180.0;
     }
 
     private function calculateCoordinateDistance(float $lat1, float $lon1, float $lat2, float $lon2): float

@@ -40,6 +40,10 @@ Handynummer    | Telefonnummer im Format `+4917...`; wird für SMS-Anfrage genut
 SMS Code       | Sechsstelliger Code aus der Fressnapf-SMS für die Authentifizierung.
 Tracker Serial | Auswahlfeld, das nach erfolgreichem Abruf alle verfügbaren Tracker zeigt.
 
+Im Bereich **Gassi-Runden Erkennung** kann festgelegt werden, ob die Heimkoordinaten aus der Location Control übernommen oder manuell hinterlegt werden. Wird die automatische Übernahme deaktiviert, nutzt das Modul die zwei neuen Eingabefelder „Manuelle Latitude/Longitude“, was insbesondere in Setups ohne Location-Control-Instanz hilfreich ist.
+
+Sobald die Option *Hunderunde speichern* aktiv ist, puffert das Modul die einzelnen GPS-Punkte selbstständig. Die Variable **Letzte Hunderunde** wird dadurch auch dann gefüllt, wenn für `Latitude`/`Longitude` kein Archiv-Logging aktiv ist; vorhandene Archivdaten werden nur noch als Fallback genutzt.
+
 __Buttons__:
 
 Button              | Wirkung
